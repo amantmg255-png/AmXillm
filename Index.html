@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AmXillm - Research Notebook</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <style>
+        :root { --fbBlue: #1877f2; }
+        body { background-color: #f0f2f5; height: 100vh; overflow: hidden; font-family: sans-serif; }
+        .resizer-h { cursor: col-resize; width: 6px; background: #e4e6eb; transition: background 0.2s; }
+        .resizer-h:hover { background: var(--fbBlue); }
+        .panel { display: flex; flex-direction: column; background: white; border: 1px solid #e4e6eb; }
+        /* Facebook blue branding */
+        .bg-fb-blue { background-color: var(--fbBlue); }
+        .text-fb-blue { color: var(--fbBlue); }
+        .border-fb-blue { border-color: var(--fbBlue); }
+    </style>
+</head>
+<body class="flex flex-col h-screen">
+
+    <!-- Header with Bold Facebook Blue -->
+    <header class="h-14 bg-white border-b border-gray-300 flex items-center justify-between px-4 shrink-0 shadow-sm">
+        <div class="flex items-center space-x-3">
+            <div class="bg-fb-blue text-white font-bold px-3 py-1 rounded text-sm tracking-tighter">AMX</div>
+            <h1 class="font-bold text-gray-800 text-lg">AmXillm <span class="text-fb-blue">Research</span></h1>
+        </div>
+        <div class="flex items-center space-x-4">
+            <select id="lang-select" onchange="changeLang(this.value)" class="text-xs border rounded p-1">
+                <option value="en">English</option>
+                <option value="ar">العربية</option>
+                <option value="ur">اردو</option>
+            </select>
+            <div class="flex items-center space-x-2">
+                <input type="password" id="api-key" placeholder="Gemini API Key" class="text-xs border rounded p-1 w-40">
+                <button onclick="validateKey()" class="bg-fb-blue text-white px-3 py-1 rounded text-xs font-bold">Connect</button>
+                <div id="status-dot" class="w-2 h-2 rounded-full bg-red-500"></div>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 flex overflow-hidden">
+        <section id="left-panel" class="panel w-1/4 min-w-[200px]">
+            <div class="p-4 border-b font-bold text-xs uppercase text-gray-500">Documents</div>
+            <div class="p-4 flex-1 overflow-y-auto">
+                <label class="block border-2 border-dashed border-gray-300 p-4 text-center cursor-pointer hover:border-fb-blue hover:bg-blue-50 transition-colors">
+                    <p class="text-xs font-bold mt-2 text-gray-600">Upload Papers</p>
+                    <input type="file" class="hidden" multiple accept=".pdf,.docx,.txt" onchange="handleFiles(event)">
+                </label>
+                <button onclick="combineDocs()" class="w-full mt-4 bg-gray-800 text-white text-xs py-2 rounded font-bold hover:bg-gray-900">Combine Checked</button>
+                <div id="doc-list" class="mt-4 space-y-2"></div>
+            </div>
+        </section>
+
+        <div class="resizer-h" id="resizer-1"></div>
+
+        <section id="center-panel" class="panel w-1/2 min-w-[300px]">
+            <div class="p-3 border-b flex justify-between items-center bg-white text-xs font-bold text-gray-600">
+                <span id="active-title" class="text-fb-blue">Workspace</span>
+            </div>
+            <div id="viewer" class="flex-1 overflow-auto p-8 bg-gray-100">
+                <div id="render-area" class="bg-white shadow p-10 min-h-full max-w-3xl mx-auto rounded"></div>
+            </div>
+        </section>
+
+        <div class="resizer-h" id="resizer-2"></div>
+
+        <section id="right-panel" class="panel w-1/4 min-w-[250px]">
+            <div class="p-3 border-b bg-gray-50 space-y-2">
+                <textarea id="search-input" placeholder="Summarize current documents..." class="w-full text-xs border p-2 rounded focus:ring-2 focus:ring-fb-blue focus:outline-none" rows="3"></textarea>
+                <div class="flex space-x-2">
+                    <button onclick="performResearch()" class="flex-1 bg-fb-blue text-white text-xs py-1.5 rounded font-bold hover:bg-blue-700">Summarize</button>
+                    <button onclick="clearSearchInput()" class="flex-1 bg-gray-300 text-gray-700 text-xs py-1.5 rounded font-bold hover:bg-gray-400">Clear</button>
+                </div>
+            </div>
+            <div id="chat-box" class="flex-1 overflow-y-auto p-4 space-y-4 text-sm font-mono text-gray-800 border-b">
+                <div class="text-gray-500 italic">AmXillm: Ready. Upload a file and enter a prompt to begin.</div>
+            </div>
+            <div class="p-3 bg-white">
+                <textarea id="chat-input" class="w-full text-xs border p-2 rounded focus:ring-1 focus:ring-fb-blue focus:outline-none" rows="2" placeholder="Ask Gemini..."></textarea>
+                <button onclick="sendMessage()" class="w-full bg-fb-blue text-white text-xs py-1.5 mt-1 rounded font-bold hover:bg-blue-700">Send</button>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        let documents = [];
+        let isConnected = false;
+
+        async function handleFiles(e) {
+            const files = e.target.files;
+            for (let file of files) {
+                const id = Date.now();
+                let html = "";
+                if (file.name.endsWith('.docx')) {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const result = await mammoth.convertToHtml({ arrayBuffer });
+                    html = result.value;
+                } else if (file.name.endsWith('.pdf')) {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                    let text = "";
+                    for(let i=1; i<=pdf.numPages; i++){
+                        const page = await pdf.getPage(i);
+                        const txt = await page.getTextContent();
+                        text += txt.items.map(item => item.str).join(' ');
+                    }
+                    html = `<pre style="white-space: pre-wrap;">${text}</pre>`;
+                } else {
+                    html = await file.text();
+                }
+                const doc = { id, name: file.name, html, rawText: html.replace(/<[^>]*>?/gm, '') };
+                documents.push(doc);
+                const btn = document.createElement('div');
+                btn.className = "text-xs p-2 bg-white border border-gray-200 rounded cursor-pointer hover:border-fb-blue transition-colors mb-1";
+                btn.innerText = file.name;
+                btn.onclick = () => viewDoc(id);
+                document.getElementById('doc-list').appendChild(btn);
+                viewDoc(id);
+            }
+        }
+
+        function viewDoc(id) {
+            const doc = documents.find(d => d.id === id);
+            if (doc) {
+                document.getElementById('render-area').innerHTML = doc.html;
+                document.getElementById('active-title').innerText = doc.name;
+            }
+        }
+
+        async function callGemini(prompt) {
+            const apiKey = document.getElementById('api-key').value;
+            if (!apiKey) throw new Error("API Key is required.");
+            
+            // Using gemini-1.5-flash for maximum stability
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+            
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: prompt }] }]
+                })
+            });
+            
+            const data = await response.json();
+            if (!response.ok) {
+                console.error("API Error Details:", data);
+                throw new Error(`${response.status} ${response.statusText}: ${data.error?.message || "Check your API key or quota."}`);
+            }
+            return data.candidates?.[0]?.content?.parts?.[0]?.text || "No response generated.";
+        }
+
+        async function performResearch() {
+            const query = document.getElementById('search-input').value;
+            const chatBox = document.getElementById('chat-box');
+            if (!isConnected) { chatBox.innerHTML += `<div class="text-red-500 font-bold p-2 border border-red-200 rounded bg-red-50">Error: Connect API key first.</div>`; return; }
+            if (!query) return;
+
+            chatBox.innerHTML += `<div class="text-fb-blue font-bold mt-3 border-t border-gray-200 pt-3">Research Query: ${query}</div>`;
+            
+            try {
+                const context = documents.length > 0 ? documents.map(d => d.name + ":\n" + d.rawText).join('\n\n---\n\n') : "No documents uploaded.";
+                const prompt = `You are a helpful research assistant. Based on these documents:\n\n${context}\n\nUser Question: ${query}`;
+                const summary = await callGemini(prompt);
+                chatBox.innerHTML += `<div class="bg-gray-100 p-3 rounded mt-2 text-xs border-l-4 border-fb-blue">${summary.replace(/\n/g, '<br>')}</div>`;
+            } catch (e) {
+                chatBox.innerHTML += `<div class="text-red-600 mt-2 font-bold p-2 bg-red-50 rounded text-xs">API Error: ${e.message}</div>`;
+            }
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        function clearSearchInput() {
+            document.getElementById('search-input').value = "";
+        }
+
+        async function sendMessage() {
+            const msg = document.getElementById('chat-input').value;
+            const chatBox = document.getElementById('chat-box');
+            if (!isConnected) { chatBox.innerHTML += `<div class="text-red-500 text-xs">Error: Connect API key first.</div>`; return; }
+            if (!msg) return;
+
+            chatBox.innerHTML += `<div class="text-gray-600 mt-2 font-bold">You: ${msg}</div>`;
+            try {
+                const response = await callGemini(msg);
+                chatBox.innerHTML += `<div class="bg-gray-50 p-2 rounded mt-2 text-xs border border-gray-100">${response.replace(/\n/g, '<br>')}</div>`;
+            } catch (e) {
+                chatBox.innerHTML += `<div class="text-red-600 mt-2 font-bold text-xs p-2 bg-red-50 rounded">API Error: ${e.message}</div>`;
+            }
+            document.getElementById('chat-input').value = "";
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+        
+        function validateKey() { 
+            const key = document.getElementById('api-key').value;
+            if(key) { isConnected = true; document.getElementById('status-dot').className = "w-2 h-2 rounded-full bg-green-500"; }
+            else { alert("Please enter an API Key."); }
+        }
+        function changeLang(val) { document.body.dir = (val === 'ar' || val === 'ur') ? 'rtl' : 'ltr'; }
+        function combineDocs() { document.getElementById('render-area').innerHTML = documents.map(d => d.html).join('<hr class="my-4"/>'); }
+    </script>
+</body>
+</html>
